@@ -1,3 +1,8 @@
+"""
+Centralized config loader: parses config.ini, exposes strongly-typed global settings,
+and provides helpers for reading/writing results.
+"""
+
 import sys # for reading command line arguments
 from configparser import ConfigParser
 import torch
@@ -19,6 +24,9 @@ class DataType:
 
 
 def getFloatDtype(bits: int):
+    """
+    Convenience factory so config can pick 16/32/64 bit tensor/np types via integers.
+    """
     if bits == 64:
         return DataType(np.float64, torch.float64, 8)
     elif bits == 32:
@@ -50,6 +58,7 @@ def load_config(filename):
     GLOBAL_EPOCHS = config["FL"].getint("global epochs")
     PREPROCESSING_FRACTION = config["FL"].getfloat("preprocessing fraction")
     TRAINING_FRACTION      = config["FL"].getfloat("training fraction")
+    # Optional clustered FL toggle; defaults to vanilla FedAvg when = 1.
     CLUSTER_SIZE           = config["FL"].getint("cluster size", fallback=1)
 
     global LEARNING_RATE, MOMENTUM, BATCH_SIZE, TEST_BATCH_SIZE
@@ -76,6 +85,7 @@ def load_config(filename):
 
     global RANDOM_SEED
     RANDOM_SEED = config["INPUT"].getint("random seed")
+    # Keep dataset splits and client sampling deterministic unless the user overrides.
     torch.manual_seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
     random.seed(RANDOM_SEED)

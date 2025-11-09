@@ -15,10 +15,15 @@ from datetime import datetime
 
 from log import *
 
+# This script orchestrates the full BBB-FLIDS training simulation:
+# 1. loads config/dataset, 2. spins up blockchain platform,
+# 3. assigns clients (optionally grouped into clusters),
+# 4. runs local/clustered training rounds, and 5. evaluates/logs results.
+
 
 def fractionUsers(users, fraction: float):
     """
-    Select a random fraction of the users
+    Select a random fraction of the users for participation in a stage.
     """
     amount = max(1, round(fraction*len(users)))
     users = users[:]
@@ -49,7 +54,7 @@ class ClientCluster:
         epoch = self.leader.account.getEpoch()
         modelBytes = self.leader.account.getModel()
         accumulator = self._aggregator
-        accumulator.zero()
+        accumulator.zero()  # reset scratch model so we can add members' parameters
         total_size = 0
         for client in self.members:
             update = client.localUpdate(modelBytes=modelBytes, epoch=epoch, upload=False)
@@ -60,10 +65,12 @@ class ClientCluster:
                 log.warning(f"Cluster {self.cluster_id}: client {client.index} produced zero-sized update")
                 continue
             total_size += update["size"]
+            # Weighted sum: add parameters scaled by local sample count
             accumulator.federate_from_bytes(update["model"], update["size"])
         if total_size == 0:
             log.warning(f"Cluster {self.cluster_id}: no usable updates; skipping blockchain submission.")
             return None
+        # Convert accumulated weighted sum to an average update before submitting.
         accumulator.divide(total_size)
         receipt = self.leader.account.localUpdate(epoch, total_size, accumulator.to_bytes())
         log.info(f"Cluster {self.cluster_id} committed aggregated update with {total_size} samples.")
@@ -115,6 +122,10 @@ def main():
     global train_dataloaders, test_dataloader
 
     def preprocessStage(subset):
+        """
+        Runs the two-step mean/std aggregation by letting only a fraction of
+        clients report their statistics but broadcasting the results to everyone.
+        """
         log.info(f"Starting preprocess stage... {len(subset)} client(s) participate.")
         receipts = [client.localMeans() for client in subset]
         server.combineMeans(receipts)
@@ -151,6 +162,7 @@ def main():
 
     test_dataloader = DataLoader(dataset.test, batch_size=TEST_BATCH_SIZE)
     train_dataloaders = split_data_equal(dataset.train, NUM_USERS, BATCH_SIZE)
+    # Each element in train_dataloaders now represents a client's local data stream.
 
     try:
         model = ModelConfig.__dict__[MODEL_NAME]
@@ -197,6 +209,7 @@ def main():
     log.info("Starting training...")
     for i in tqdm(range(GLOBAL_EPOCHS)):
         if using_clusters:
+            # Draw a random subset of clusters and have each submit a single aggregated update.
             subset_clusters = fractionUsers(clusters, TRAINING_FRACTION)
             receipts = []
             for cluster in tqdm(subset_clusters):
@@ -204,6 +217,7 @@ def main():
                 if receipt is not None:
                     receipts.append(receipt)
         else:
+            # Classic FedAvg path: sample individual clients directly.
             subset = fractionUsers(clients, TRAINING_FRACTION)
             receipts = [client.localUpdate() for client in tqdm(subset)]
 

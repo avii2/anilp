@@ -1,6 +1,6 @@
 """
-This module contains classes that represent various agents in the federated
-learning system.
+This module contains classes that represent the server/client agents that talk to
+the blockchain backend and orchestrate local training / aggregation steps.
 """
 import numpy as np
 import torch
@@ -72,6 +72,7 @@ class FL:
             """
             X = torch.cat([x for x, y in self.dataloader])
             size = X.shape[0]
+            # Use global mean (shared earlier) to compute variance contribution.
             stds = (X - self.means).square().mean(0, keepdim=True)
             # Commit to blockchain
             tx_receipt = self.account.localStds(size, stds.numpy().tobytes())
@@ -88,7 +89,7 @@ class FL:
         def localUpdate(self, *, modelBytes=None, epoch=None, upload=True):
             """
             Perform a local update and trigger an event in blockchain.
-            Returns a transaction receipt.
+            Returns a transaction receipt or the raw update (when upload=False).
             """
             # Load the latest model from blockchain
             if epoch is None:
@@ -99,7 +100,7 @@ class FL:
 
             datasize = 0
             for X, y in self.dataloader:
-                datasize += X.shape[0]
+                datasize += X.shape[0]  # track number of samples for weighting
 
             train_loss = 0.0
 
@@ -107,7 +108,7 @@ class FL:
             optimizer = torch.optim.SGD(self.model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM)
             for i in range(LOCAL_EPOCHS):
                 for batch, (X, y) in enumerate(self.dataloader):
-                    normX = (X - self.means) / self.stds
+                    normX = (X - self.means) / self.stds  # feature-wise standardization
                     pred = self.model(normX)
                     loss = FL.LossFunc(pred, y)
                     train_loss += loss.item()
@@ -123,6 +124,7 @@ class FL:
             # Commit to blockchain
             model_blob = self.model.to_bytes()
             if not upload:
+                # Clustered mode consumes the raw update without touching blockchain.
                 return {
                         "epoch": epoch,
                         "size": datasize,
@@ -185,7 +187,7 @@ class FL:
             epoch = self.account.getEpoch()
             totalDataSize = self.account.getDataSize()
             log.info(f"Averaging model from {len(receipts)} local update(s)...")
-            self.model.zero()
+            self.model.zero()  # start from zero so weighted sum builds a fresh global model
             for size, modelBytes in self.account.getUpdateEvents(receipts):
                 # Weight of each update should be proportional to the dataset size
                 weight = size / totalDataSize
