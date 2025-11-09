@@ -1,5 +1,6 @@
 """
-This module contains Ethereum Testing platform for Federated Learning.
+Ethereum-backed platform adapter that deploys the Solidity contract into
+eth-tester and exposes a Python-friendly interface identical to DummyPlatform.
 """
 from web3 import Web3
 from solcx import compile_source
@@ -21,6 +22,7 @@ def compileContract(w3, filename, *vargs):
     """
     Given web3.py instance and .sol filename, create a contract with the default account.
     The remaining arguments are passed to contract's constructor.
+    Returns a ContractInfo bundle we can hand to other accounts.
     """
     with open("FL.sol", 'r') as f:
         solidity_code = f.read()
@@ -49,6 +51,7 @@ def compileContract(w3, filename, *vargs):
 def useAccount(func):
     """
     A decorator for functions that need to use the account set in self.account
+    so we consistently set the default account before each transaction.
     """
     def f(self, *vargs, **kwargs):
         EthPlatform.w3.eth.default_account = self.account

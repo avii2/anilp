@@ -1,5 +1,6 @@
 """
 Dummy federated learning blockchain backend for faster testing.
+Provides an in-memory stand-in for the Solidity contract interface.
 """
 
 class DummyPlatform:
@@ -95,6 +96,7 @@ class DummyPlatform:
 
         # The following public accessor functions don't need to use account
         def getModel(self):
+            # Acts like contract getter returning latest serialized model
             return DummyPlatform.modelBytes
 
         def getEpoch(self):

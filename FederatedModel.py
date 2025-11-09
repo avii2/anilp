@@ -8,8 +8,8 @@ from config import *
 
 class FederatedModel(nn.Module):
     """
-    A base class for federated learning models.
-    Contains utility methods and operator overloads specialized for federated learning.
+    Base nn.Module that knows how to serialize/deserialize itself and how to
+    participate in weighted federated averaging operations.
     """
     def copy_from(self, other):
         """
@@ -45,6 +45,7 @@ class FederatedModel(nn.Module):
     def to_bytes(self):
         """
         Returns the representation of model in terms of bytes.
+        Used when storing the model on-chain or sharing between clients.
         """
         bytestr = b''
         for param in self.parameters():
@@ -71,6 +72,7 @@ class FederatedModel(nn.Module):
         for param in self.parameters():
             arr = param.detach().numpy()
             bytesize = arr.size * EXTERNAL_DTYPE.size
+            # Weighted sum in place; caller divides by total weight later if needed.
             arr += weight * np.frombuffer(bytestr[:bytesize], dtype=EXTERNAL_DTYPE.numpy).reshape(arr.shape)
             bytestr = bytestr[bytesize:]
         assert(len(bytestr) == 0)
@@ -85,6 +87,7 @@ class FederatedModel(nn.Module):
 def combine_means(means: list):
     """
     Given a list of (n, mean) tuples, find the overall mean.
+    Weights each client's contribution by its sample count.
     """
     N = sum([x for x, y in means])
     total = np.sum(np.concatenate([n*mean for n, mean in means]), axis=0, keepdims=True)
@@ -93,8 +96,8 @@ def combine_means(means: list):
 def combine_stds(var: list):
     """
     Given a list of (n, var) tuples (var = std^2), find the overall std.
+    Works with variances to avoid repeated square-roots during accumulation.
     """
     N = sum([x for x, y in var])
     total = np.sum(np.concatenate([n*mean for n, mean in var]), axis=0, keepdims=True)
     return np.sqrt(total / N)
-
