@@ -43,13 +43,14 @@ def load_config(filename):
         log.info(f"Read config file: {config_filename}")
 
     global PLATFORM_NAME, NUM_USERS, LOCAL_EPOCHS, GLOBAL_EPOCHS
-    global PREPROCESSING_FRACTION, TRAINING_FRACTION
+    global PREPROCESSING_FRACTION, TRAINING_FRACTION, CLUSTER_SIZE
     PLATFORM_NAME = config["FL"]["platform"]
     NUM_USERS     = config["FL"].getint("num users")
     LOCAL_EPOCHS  = config["FL"].getint("local epochs")
     GLOBAL_EPOCHS = config["FL"].getint("global epochs")
     PREPROCESSING_FRACTION = config["FL"].getfloat("preprocessing fraction")
     TRAINING_FRACTION      = config["FL"].getfloat("training fraction")
+    CLUSTER_SIZE           = config["FL"].getint("cluster size", fallback=1)
 
     global LEARNING_RATE, MOMENTUM, BATCH_SIZE, TEST_BATCH_SIZE
     LEARNING_RATE   = config["ML"].getfloat("learning rate")
@@ -105,4 +106,3 @@ def add_results(obj):
     data.append(obj)
     with open(RESULTS_FILE, 'w') as f:
         json.dump(data, f, indent = 4)
-

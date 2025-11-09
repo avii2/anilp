@@ -26,6 +26,64 @@ def fractionUsers(users, fraction: float):
     return users[:amount]
 
 
+class ClientCluster:
+    """
+    Simple helper that groups a handful of clients and reports a single aggregated update.
+    """
+    def __init__(self, members, cluster_id: int):
+        if not members:
+            raise ValueError("ClientCluster must contain at least one client")
+        self.members = members
+        self.cluster_id = cluster_id
+        self.leader = members[0]
+        # Reuse a scratch model to avoid repeated allocations while aggregating.
+        self._aggregator = copy.deepcopy(self.leader.model)
+
+    def __len__(self):
+        return len(self.members)
+
+    def localClusterUpdate(self):
+        """
+        Let every client in this cluster train locally and aggregate their models.
+        """
+        epoch = self.leader.account.getEpoch()
+        modelBytes = self.leader.account.getModel()
+        accumulator = self._aggregator
+        accumulator.zero()
+        total_size = 0
+        for client in self.members:
+            update = client.localUpdate(modelBytes=modelBytes, epoch=epoch, upload=False)
+            if update["epoch"] != epoch:
+                log.warning(f"Cluster {self.cluster_id}: skipping stale update from client {client.index}")
+                continue
+            if update["size"] == 0:
+                log.warning(f"Cluster {self.cluster_id}: client {client.index} produced zero-sized update")
+                continue
+            total_size += update["size"]
+            accumulator.federate_from_bytes(update["model"], update["size"])
+        if total_size == 0:
+            log.warning(f"Cluster {self.cluster_id}: no usable updates; skipping blockchain submission.")
+            return None
+        accumulator.divide(total_size)
+        receipt = self.leader.account.localUpdate(epoch, total_size, accumulator.to_bytes())
+        log.info(f"Cluster {self.cluster_id} committed aggregated update with {total_size} samples.")
+        return receipt
+
+
+def build_clusters(clients, cluster_size: int):
+    """
+    Group consecutive clients into clusters of at most cluster_size members.
+    """
+    if cluster_size <= 1:
+        return []
+    clusters = []
+    for offset in range(0, len(clients), cluster_size):
+        members = clients[offset:offset + cluster_size]
+        if members:
+            clusters.append(ClientCluster(members, len(clusters)))
+    return clusters
+
+
 def test_model(model, dataloader, means, stds):
     """
     Test the accuracy and loss of the model with given data loader.
@@ -116,6 +174,9 @@ def main():
             FL.Client(accounts[i], local_model, dataloader)
             for i, dataloader in enumerate(train_dataloaders)
             ]
+    clusters = build_clusters(clients, CLUSTER_SIZE)
+    if clusters:
+        log.info(f"Clustered FL enabled: {len(clusters)} cluster(s) with up to {CLUSTER_SIZE} client(s) each.")
 
     if PREPROCESSING_FRACTION == 0.0:
         log.info(f"Fraction is 0; skipping preprocessing stage")
@@ -132,10 +193,24 @@ def main():
     accuracies = []
     losses = []
 
+    using_clusters = len(clusters) > 0
     log.info("Starting training...")
     for i in tqdm(range(GLOBAL_EPOCHS)):
-        subset = fractionUsers(clients, TRAINING_FRACTION)
-        receipts = [client.localUpdate() for client in tqdm(subset)]
+        if using_clusters:
+            subset_clusters = fractionUsers(clusters, TRAINING_FRACTION)
+            receipts = []
+            for cluster in tqdm(subset_clusters):
+                receipt = cluster.localClusterUpdate()
+                if receipt is not None:
+                    receipts.append(receipt)
+        else:
+            subset = fractionUsers(clients, TRAINING_FRACTION)
+            receipts = [client.localUpdate() for client in tqdm(subset)]
+
+        if not receipts:
+            log.warning("No updates collected this round; skipping model averaging.")
+            continue
+
         server.averageUpdates(receipts)
         if EVAL_PER_EPOCH:
             model = server.getModel()
@@ -158,4 +233,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

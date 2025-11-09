@@ -85,14 +85,16 @@ class FL:
             # Handle 0 stds to avoid division by zero
             self.stds[self.stds == 0.0] = 1.0
 
-        def localUpdate(self):
+        def localUpdate(self, *, modelBytes=None, epoch=None, upload=True):
             """
             Perform a local update and trigger an event in blockchain.
             Returns a transaction receipt.
             """
             # Load the latest model from blockchain
-            epoch = self.account.getEpoch()
-            modelBytes = self.account.getModel()
+            if epoch is None:
+                epoch = self.account.getEpoch()
+            if modelBytes is None:
+                modelBytes = self.account.getModel()
             self.model.from_bytes(modelBytes)
 
             datasize = 0
@@ -119,7 +121,14 @@ class FL:
             log.info(f"FL Client {self.index} local loss: {loss}")
 
             # Commit to blockchain
-            tx_receipt = self.account.localUpdate(epoch, datasize, self.model.to_bytes())
+            model_blob = self.model.to_bytes()
+            if not upload:
+                return {
+                        "epoch": epoch,
+                        "size": datasize,
+                        "model": model_blob,
+                    }
+            tx_receipt = self.account.localUpdate(epoch, datasize, model_blob)
 
             return tx_receipt
 
@@ -192,4 +201,3 @@ class FL:
             modelBytes = self.account.getModel()
             self.model.from_bytes(modelBytes)
             return self.model
-
